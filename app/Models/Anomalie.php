@@ -18,6 +18,7 @@ class Anomalie extends Model
         'statut',
         'model_i_a_id',
         'flux_video_id',
+        'image_url',
     ];
 
     public function heatmap()

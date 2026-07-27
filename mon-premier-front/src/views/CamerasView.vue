@@ -9,7 +9,6 @@ let intervalDetection = null
 
 // Résultats reçus de l'IA Hugging Face via Laravel
 const resultatIa = ref({
-  heatmap: null,
   rapport: '',
   criticite: ''
 })
@@ -39,35 +38,36 @@ async function demarrerWebcam() {
   }
 }
 
-// Extraction automatique d'une frame et envoi à l'IA
+// Extraction automatique d'une frame compressée et envoi au Dashboard
 async function capturerEtDetecter() {
   if (!mediaStream || analyseEnCours.value) return
 
   const video = document.querySelector('video.camera-feed')
   if (!video || video.readyState !== 4) return
 
+  // 1. Dimensions optimisées pour éviter l'erreur 500 dans Laravel
   const canvas = document.createElement('canvas')
-  canvas.width = video.videoWidth || 640
-  canvas.height = video.videoHeight || 480
+  canvas.width = 640
+  canvas.height = 360
 
   const ctx = canvas.getContext('2d')
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-  const imageBase64 = canvas.toDataURL('image/jpeg', 0.8)
+  // 2. Compression JPEG à 50% de qualité
+  const imageBase64Legere = canvas.toDataURL('image/jpeg', 0.5)
 
   analyseEnCours.value = true
   try {
     const activeCamId = cameraZoomee.value ? cameraZoomee.value.id : (cameras.value[0]?.id || 1)
     
-    // Appel à l'API Laravel
+    // Envoi de la capture légère à Laravel
     const response = await api.post('/detecter-anomalie', {
-      image: imageBase64,
+      image: imageBase64Legere,
       camera_id: activeCamId
     })
 
     if (response.data) {
       resultatIa.value = {
-        heatmap: response.data.chemin_heatmap,
         rapport: response.data.rapport_textuel || response.data.description,
         criticite: response.data.criticite || 'HAUTE'
       }
@@ -128,10 +128,8 @@ onUnmounted(() => {
         class="tuile-camera"
         @click="ouvrirZoom(camera)"
       >
+        <!-- Flux vidéo net en direct -->
         <video class="camera-feed" autoplay muted playsinline></video>
-        
-        <!-- Superposition de la Heatmap IA si disponible -->
-        <img v-if="resultatIa.heatmap" :src="resultatIa.heatmap" class="heatmap-overlay" alt="Heatmap IA" />
 
         <div class="overlay-info">
           <span class="nom">{{ camera.nom }}</span>
@@ -152,7 +150,6 @@ onUnmounted(() => {
         
         <div class="zoom-video-container">
           <video class="camera-feed-zoom" autoplay muted playsinline></video>
-          <img v-if="resultatIa.heatmap" :src="resultatIa.heatmap" class="heatmap-overlay-zoom" alt="Heatmap IA Zoom" />
         </div>
 
         <div v-if="resultatIa.rapport" class="vlm-box-modal">
@@ -240,15 +237,6 @@ onUnmounted(() => {
   height: 100%;
   object-fit: cover;
 }
-.heatmap-overlay {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  pointer-events: none;
-  opacity: 0.75;
-}
 
 .overlay-info {
   position: absolute;
@@ -320,15 +308,6 @@ onUnmounted(() => {
 .camera-feed-zoom {
   width: 100%;
   display: block;
-}
-.heatmap-overlay-zoom {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  pointer-events: none;
-  opacity: 0.75;
 }
 .vlm-box-modal {
   margin-top: 12px;
