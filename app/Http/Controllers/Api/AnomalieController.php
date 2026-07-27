@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Anomalie;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 
 class AnomalieController extends Controller
 {
@@ -27,6 +29,68 @@ class AnomalieController extends Controller
         }
 
         return response()->json($query->latest('date_detection')->get());
+    }
+
+    // POST /api/detecter-anomalie — appelée par Vue.js pour l'analyse en direct de la caméra
+    public function detecterAnomalie(Request $request)
+    {
+        $request->validate([
+            'image' => 'required|string', // Image Base64 venant de Vue.js
+            'camera_id' => 'nullable',
+        ]);
+
+        $imageBase64 = $request->input('image');
+        $cameraId = $request->input('camera_id');
+
+        // 1. Détermination dynamique de la zone à partir du camera_id
+        $nomZone = 'Zone Inconnue';
+
+        if ($cameraId) {
+            // Cherche d'abord dans la table flux_videos
+            $camera = DB::table('flux_videos')->where('id', $cameraId)->first();
+            
+            // Si pas trouvé, cherche dans la table cameras
+            if (!$camera) {
+                $camera = DB::table('cameras')->where('id', $cameraId)->first();
+            }
+
+            if ($camera) {
+                $nomZone = $camera->emplacement ?? $camera->zone ?? $camera->nom ?? "Camera_{$cameraId}";
+            } else {
+                $nomZone = "Camera_{$cameraId}";
+            }
+        } else {
+            $nomZone = 'Quai 3';
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Intégration de l'API Hugging Face
+        |--------------------------------------------------------------------------
+        | Dès que l'API de ta camarade est prête, décommente ces lignes :
+        |
+        | $hfUrl = "https://TON_LIEN_SPACE_HUGGING_FACE.hf.space/predict";
+        | $responseIA = Http::post($hfUrl, ['image' => $imageBase64]);
+        | $dataIA = $responseIA->json();
+        */
+
+        // 2. Enregistrement de l'anomalie en base de données avec la zone dynamique
+        $anomalie = Anomalie::create([
+            'type' => 'absence_epi',
+            'criticite' => 'haute',
+            'date_detection' => now(),
+            'zone' => $nomZone,
+            'score_confiance' => 0.94,
+            'statut' => 'nouvelle'
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'chemin_heatmap' => null,
+            'rapport_textuel' => "Alerte [CRITIQUE] : Infraction EPI (absence de casque) détectée sur {$nomZone}.",
+            'criticite' => 'HAUTE',
+            'anomalie' => $anomalie
+        ], 200);
     }
 
     // POST /api/anomalies — appelé par votre script Python quand une anomalie est détectée

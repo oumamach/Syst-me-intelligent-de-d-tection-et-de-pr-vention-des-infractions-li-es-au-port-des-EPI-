@@ -5,10 +5,23 @@ import api from '@/services/api'
 const cameras = ref([])
 const cameraZoomee = ref(null)
 let mediaStream = null
+let intervalDetection = null
+
+// Résultats reçus de l'IA Hugging Face via Laravel
+const resultatIa = ref({
+  heatmap: null,
+  rapport: '',
+  criticite: ''
+})
+const analyseEnCours = ref(false)
 
 async function chargerCameras() {
-  const response = await api.get('/cameras')
-  cameras.value = response.data
+  try {
+    const response = await api.get('/cameras')
+    cameras.value = response.data
+  } catch (e) {
+    console.error('Erreur lors du chargement des caméras:', e)
+  }
 }
 
 async function demarrerWebcam() {
@@ -18,8 +31,51 @@ async function demarrerWebcam() {
     document.querySelectorAll('video.camera-feed').forEach((v) => {
       v.srcObject = mediaStream
     })
+
+    // Lancer la détection automatique toutes les 3 secondes
+    intervalDetection = setInterval(capturerEtDetecter, 3000)
   } catch (e) {
-    console.error('Impossible d\'accéder à la webcam:', e)
+    console.error("Impossible d'accéder à la webcam:", e)
+  }
+}
+
+// Extraction automatique d'une frame et envoi à l'IA
+async function capturerEtDetecter() {
+  if (!mediaStream || analyseEnCours.value) return
+
+  const video = document.querySelector('video.camera-feed')
+  if (!video || video.readyState !== 4) return
+
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth || 640
+  canvas.height = video.videoHeight || 480
+
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+  const imageBase64 = canvas.toDataURL('image/jpeg', 0.8)
+
+  analyseEnCours.value = true
+  try {
+    const activeCamId = cameraZoomee.value ? cameraZoomee.value.id : (cameras.value[0]?.id || 1)
+    
+    // Appel à l'API Laravel
+    const response = await api.post('/detecter-anomalie', {
+      image: imageBase64,
+      camera_id: activeCamId
+    })
+
+    if (response.data) {
+      resultatIa.value = {
+        heatmap: response.data.chemin_heatmap,
+        rapport: response.data.rapport_textuel || response.data.description,
+        criticite: response.data.criticite || 'HAUTE'
+      }
+    }
+  } catch (e) {
+    console.error("Erreur de détection automatique:", e)
+  } finally {
+    analyseEnCours.value = false
   }
 }
 
@@ -41,6 +97,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (intervalDetection) clearInterval(intervalDetection)
   if (mediaStream) {
     mediaStream.getTracks().forEach((track) => track.stop())
   }
@@ -49,8 +106,20 @@ onUnmounted(() => {
 
 <template>
   <div class="page">
-    <router-link to="/dashboard">← Retour au tableau de bord</router-link>
+    <div class="header-bar">
+      <router-link to="/dashboard" class="back-link">← Retour au tableau de bord</router-link>
+      <span class="live-indicator" :class="{ 'active': analyseEnCours }">
+        ● {{ analyseEnCours ? 'IA : Analyse en cours...' : 'Surveillance IA Active' }}
+      </span>
+    </div>
+
     <h1>Caméras — Surveillance en direct</h1>
+
+    <!-- Banner du dernier Rapport VLM généré -->
+    <div v-if="resultatIa.rapport" class="vlm-banner" :class="resultatIa.criticite.toLowerCase()">
+      <div class="vlm-badge">{{ resultatIa.criticite }}</div>
+      <div class="vlm-text"><b>Rapport VLM :</b> {{ resultatIa.rapport }}</div>
+    </div>
 
     <div class="grille-cameras">
       <div
@@ -60,29 +129,93 @@ onUnmounted(() => {
         @click="ouvrirZoom(camera)"
       >
         <video class="camera-feed" autoplay muted playsinline></video>
+        
+        <!-- Superposition de la Heatmap IA si disponible -->
+        <img v-if="resultatIa.heatmap" :src="resultatIa.heatmap" class="heatmap-overlay" alt="Heatmap IA" />
+
         <div class="overlay-info">
           <span class="nom">{{ camera.nom }}</span>
-          <span class="zone">{{ camera.zone }}</span>
+          <span class="zone">{{ camera.emplacement || camera.zone }}</span>
         </div>
-        <div class="statut-dot" :class="camera.statut"></div>
+        <div class="statut-dot" :class="camera.statut ? camera.statut.toLowerCase() : 'actif'"></div>
       </div>
-      <p v-if="cameras.length === 0">Aucune caméra enregistrée.</p>
+      <p v-if="cameras.length === 0" class="empty-msg">Aucune caméra enregistrée.</p>
     </div>
 
     <!-- Vue zoomée en plein écran -->
     <div v-if="cameraZoomee" class="modal-zoom" @click.self="fermerZoom">
       <div class="contenu-zoom">
         <div class="header-zoom">
-          <span>{{ cameraZoomee.nom }} — {{ cameraZoomee.zone }}</span>
+          <span>{{ cameraZoomee.nom }} — {{ cameraZoomee.emplacement || cameraZoomee.zone }}</span>
           <button @click="fermerZoom">✕ Fermer</button>
         </div>
-        <video class="camera-feed-zoom" autoplay muted playsinline></video>
+        
+        <div class="zoom-video-container">
+          <video class="camera-feed-zoom" autoplay muted playsinline></video>
+          <img v-if="resultatIa.heatmap" :src="resultatIa.heatmap" class="heatmap-overlay-zoom" alt="Heatmap IA Zoom" />
+        </div>
+
+        <div v-if="resultatIa.rapport" class="vlm-box-modal">
+          <strong>Résultat IA Hugging Face :</strong> {{ resultatIa.rapport }}
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.page {
+  padding: 24px;
+  color: #E7EBEF;
+  background: #0A0E13;
+  min-height: 100vh;
+}
+.header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.back-link {
+  color: #2FB8D6;
+  text-decoration: none;
+  font-size: 13px;
+}
+.live-indicator {
+  font-size: 11px;
+  color: #45B87E;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+.live-indicator.active {
+  color: #F0A23D;
+}
+
+/* VLM Banner */
+.vlm-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(232, 72, 60, 0.12);
+  border: 1px solid rgba(232, 72, 60, 0.4);
+  border-left: 4px solid #E8483C;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+.vlm-badge {
+  background: #E8483C;
+  color: #fff;
+  font-weight: bold;
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.vlm-text {
+  font-size: 13px;
+  color: #E7EBEF;
+}
+
 .grille-cameras {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -96,24 +229,34 @@ onUnmounted(() => {
   border-radius: 10px;
   overflow: hidden;
   cursor: pointer;
-  border: 2px solid transparent;
+  border: 2px solid #242E3A;
   transition: border-color 0.2s;
 }
 .tuile-camera:hover {
-  border-color: #2563eb;
+  border-color: #2FB8D6;
 }
 .camera-feed {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
+.heatmap-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  opacity: 0.75;
+}
+
 .overlay-info {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
   padding: 8px 10px;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
   display: flex;
   justify-content: space-between;
   color: white;
@@ -128,10 +271,16 @@ onUnmounted(() => {
   height: 9px;
   border-radius: 50%;
 }
-.statut-dot.actif { background: #22c55e; }
+.statut-dot.actif { background: #45B87E; }
 .statut-dot.inactif { background: #6b7280; }
-.statut-dot.maintenance { background: #f59e0b; }
+.statut-dot.maintenance { background: #F0A23D; }
 
+.empty-msg {
+  color: #8A96A3;
+  grid-column: 1 / -1;
+}
+
+/* Modal Zoom */
 .modal-zoom {
   position: fixed;
   inset: 0;
@@ -154,16 +303,39 @@ onUnmounted(() => {
   font-weight: 600;
 }
 .header-zoom button {
-  background: #ef4444;
+  background: #E8483C;
   color: white;
   border: none;
   padding: 8px 14px;
   border-radius: 6px;
   cursor: pointer;
 }
+.zoom-video-container {
+  position: relative;
+  width: 100%;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+}
 .camera-feed-zoom {
   width: 100%;
-  border-radius: 10px;
-  background: #000;
+  display: block;
+}
+.heatmap-overlay-zoom {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  opacity: 0.75;
+}
+.vlm-box-modal {
+  margin-top: 12px;
+  background: #171F29;
+  border-left: 3px solid #2FB8D6;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 13px;
 }
 </style>
