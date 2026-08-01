@@ -60,118 +60,215 @@ onMounted(charger)
 
 <template>
   <div class="page-container">
-    <router-link to="/dashboard" class="back-link">← Retour au tableau de bord</router-link>
-    <h1 class="page-title">Gestion des opérateurs</h1>
+    <!-- Navigation -->
+    <div class="top-nav">
+      <router-link to="/dashboard" class="back-link">
+        ← Retour au tableau de bord
+      </router-link>
+    </div>
 
-    <!-- Formulaire d'ajout -->
-    <form @submit.prevent="ajouter" class="form-ajout">
-      <input v-model="nouveau.nom" placeholder="Nom" required />
-      <input v-model="nouveau.email" type="email" placeholder="Email" required />
-      <input v-model="nouveau.password" type="password" placeholder="Mot de passe" required />
-      <button type="submit" :disabled="loading">
-        {{ loading ? 'Ajout...' : 'Ajouter' }}
-      </button>
-    </form>
+    <!-- En-tête de page -->
+    <div class="header-card">
+      <h1 class="page-title">Gestion des opérateurs</h1>
+      <p class="page-subtitle">Gérez les comptes d'accès à la plateforme de surveillance.</p>
+    </div>
 
-    <p v-if="erreur" class="error-text">{{ erreur }}</p>
+    <!-- Formulaire d'ajout d'opérateur -->
+    <div class="panel form-panel">
+      <div class="panel-head">
+        <span class="t">Ajouter un nouvel opérateur</span>
+      </div>
+      <div class="form-body">
+        <form @submit.prevent="ajouter" class="form-ajout">
+          <input 
+            v-model="nouveau.nom" 
+            placeholder="Nom complet" 
+            class="input"
+            required 
+          />
+          <input 
+            v-model="nouveau.email" 
+            type="email" 
+            placeholder="Adresse email" 
+            class="input"
+            required 
+          />
+          <input 
+            v-model="nouveau.password" 
+            type="password" 
+            placeholder="Mot de passe" 
+            class="input"
+            required 
+          />
+          <button type="submit" class="btn" :disabled="loading">
+            {{ loading ? 'Ajout en cours...' : 'Ajouter' }}
+          </button>
+        </form>
 
-    <!-- Tableau -->
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Nom</th>
-          <th>Email</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="op in operateurs" :key="op.id">
-          <td>{{ op.nom }}</td>
-          <td>{{ op.email }}</td>
-          <td>
-            <button @click="supprimer(op.id)" class="btn-delete">Supprimer</button>
-          </td>
-        </tr>
-        <tr v-if="operateurs.length === 0">
-          <td colspan="3" class="empty-text">Aucun opérateur trouvé.</td>
-        </tr>
-      </tbody>
-    </table>
+        <p v-if="erreur" class="error-text">{{ erreur }}</p>
+      </div>
+    </div>
+
+    <!-- Tableau des opérateurs -->
+    <div class="panel table-panel">
+      <div class="panel-head">
+        <span class="t">Liste des comptes actifs ({{ operateurs.length }})</span>
+      </div>
+
+      <div class="table-wrapper" v-if="operateurs.length > 0">
+        <table class="history">
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Email</th>
+              <th class="text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="op in operateurs" :key="op.id">
+              <td class="name-cell">{{ op.nom }}</td>
+              <td class="font-mono text-muted">{{ op.email }}</td>
+              <td class="text-right">
+                <button @click="supprimer(op.id)" class="btn-delete">
+                  Supprimer
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-else class="empty-state">
+        <p>Aucun opérateur trouvé.</p>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .page-container {
+  max-width: 1200px;
+  margin: 0 auto;
   padding: 24px;
-  color: #E7EBEF;
 }
+
+/* Bouton Retour */
+.top-nav {
+  margin-bottom: 16px;
+}
+
 .back-link {
-  color: #2FB8D6;
+  display: inline-flex;
+  align-items: center;
+  color: var(--rose-accent, #D4A373);
   text-decoration: none;
+  font-weight: 600;
   font-size: 13px;
-  display: inline-block;
-  margin-bottom: 12px;
+  transition: opacity 0.2s;
 }
+
+.back-link:hover {
+  opacity: 0.8;
+}
+
+/* En-tête */
+.header-card {
+  background: var(--panel, #2C2421);
+  border: 1px solid var(--border, #4A3E38);
+  border-radius: 14px;
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-sm, 0 4px 12px rgba(0,0,0,0.25));
+}
+
 .page-title {
   font-size: 22px;
-  font-weight: 600;
-  margin-bottom: 20px;
+  font-weight: 700;
+  color: var(--text, #F3EBE6);
 }
+
+.page-subtitle {
+  font-size: 13px;
+  color: var(--text-muted, #C4B5AC);
+  margin-top: 4px;
+}
+
+/* Formulaire */
+.form-panel {
+  margin-bottom: 24px;
+}
+
+.form-body {
+  padding: 20px;
+}
+
 .form-ajout {
   display: flex;
   gap: 12px;
-  margin-bottom: 16px;
+  flex-wrap: wrap;
 }
-.form-ajout input {
-  background: #121821;
-  border: 1px solid #242E3A;
-  color: #FFF;
-  padding: 10px 14px;
-  border-radius: 6px;
-  font-size: 13px;
+
+.form-ajout .input {
+  flex: 1;
+  min-width: 200px;
 }
-.form-ajout button {
-  background: #2FB8D6;
-  color: #08131a;
-  border: none;
-  padding: 10px 18px;
-  border-radius: 6px;
-  font-weight: 600;
-  cursor: pointer;
-}
+
 .error-text {
-  color: #E8483C;
+  color: var(--critical, #E07A5F);
   font-size: 13px;
-  margin-bottom: 16px;
+  margin-top: 14px;
+  font-weight: 600;
 }
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 10px;
+
+/* Tableau */
+.table-panel {
+  overflow: hidden;
 }
-.data-table th, .data-table td {
-  text-align: left;
-  padding: 12px 14px;
-  border-bottom: 1px solid #242E3A;
-  font-size: 13px;
+
+.table-wrapper {
+  overflow-x: auto;
 }
-.data-table th {
-  color: #8A96A3;
-  font-size: 11px;
-  text-transform: uppercase;
+
+.name-cell {
+  font-weight: 600;
+  color: var(--text, #F3EBE6);
 }
-.empty-text {
-  text-align: center;
-  color: #8A96A3;
-  padding: 20px;
+
+.text-muted {
+  color: var(--text-muted, #C4B5AC);
 }
+
+.text-right {
+  text-align: right;
+}
+
+.font-mono {
+  font-family: var(--font-mono, monospace);
+}
+
+/* Bouton de suppression corail */
 .btn-delete {
-  background: rgba(232, 72, 60, 0.15);
-  color: #E8483C;
-  border: 1px solid rgba(232, 72, 60, 0.3);
-  padding: 6px 12px;
-  border-radius: 4px;
+  background: rgba(224, 122, 95, 0.15);
+  color: var(--critical, #E07A5F);
+  border: 1px solid rgba(224, 122, 95, 0.3);
+  padding: 6px 14px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.btn-delete:hover {
+  background: var(--critical, #E07A5F);
+  color: #FFFFFF;
+}
+
+/* État vide */
+.empty-state {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted, #C4B5AC);
+  font-size: 13.5px;
 }
 </style>
