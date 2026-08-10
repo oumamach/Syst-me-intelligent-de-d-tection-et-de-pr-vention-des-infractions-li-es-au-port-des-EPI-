@@ -4,15 +4,18 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Anomalie;
+use App\Models\Heatmap;
+use App\Models\RapportTextuel;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class AnomalieController extends Controller
 {
-    // GET /api/anomalies — liste des anomalies
+    private string $gradioBaseUrl = 'https://ppe-detection-7bya.onrender.com';
+
+    // GET /api/anomalies
     public function index(Request $request)
     {
         $query = Anomalie::with(['heatmap', 'rapportTextuel']);
@@ -38,116 +41,156 @@ class AnomalieController extends Controller
     {
         $request->validate([
             'image' => 'required|string',
+            'zone' => 'nullable|string',
             'camera_id' => 'nullable',
         ]);
 
         $imageBase64 = $request->input('image');
-        $cameraId = $request->input('camera_id');
-
-        // 1. Détermination de la zone
-        $nomZone = 'entree_principale';
-        if ($cameraId) {
-            try {
-                $camera = DB::table('flux_videos')->where('id', $cameraId)->first() 
-                       ?? DB::table('cameras')->where('id', $cameraId)->first();
-                if ($camera) {
-                    $nomZone = $camera->emplacement ?? $camera->zone ?? $camera->nom ?? "Camera_{$cameraId}";
-                } else {
-                    $nomZone = "Camera_{$cameraId}";
-                }
-            } catch (\Exception $e) {
-                $nomZone = "Camera_{$cameraId}";
-            }
-        }
-
-        // 2. Appel dynamique de l'API Hugging Face de détection EPI
-        $hfUrl = "https://alaemoussi-ppe-detection-api.hf.space/predict";
-        
-        $rapportTextuel = "Alerte [CRITIQUE] : Infraction EPI détectée sur {$nomZone}.";
-        $typeAnomalie = 'absence_epi';
-        $scoreConfiance = 0.92;
-        $imageAStocke = $imageBase64; // Par défaut, conserve l'image originale
+        $zone = $request->input('zone') ?? ($request->input('camera_id') ? "Camera_{$request->input('camera_id')}" : 'entree_principale');
 
         try {
-            // Requête HTTP vers le Space Hugging Face (timeout de 10s pour prévenir les blocages)
-            $responseIA = Http::timeout(10)->post($hfUrl, [
-                'image' => $imageBase64
-            ]);
-
-            if ($responseIA->successful()) {
-                $dataIA = $responseIA->json();
-
-                // Utilisation de l'image annotée avec Bounding Boxes / Heatmap si retournée par l'IA
-                if (!empty($dataIA['annotated_image'])) {
-                    $imageAStocke = $dataIA['annotated_image'];
-                } elseif (!empty($dataIA['heatmap'])) {
-                    $imageAStocke = $dataIA['heatmap'];
-                }
-
-                // Construction dynamique du rapport selon les détections de l'IA (Casque, Gilet, Bottes, etc.)
-                if (!empty($dataIA['report'])) {
-                    $rapportTextuel = $dataIA['report'];
-                } elseif (!empty($dataIA['description'])) {
-                    $rapportTextuel = $dataIA['description'];
-                } elseif (!empty($dataIA['detections']) && is_array($dataIA['detections'])) {
-                    $infractions = implode(', ', $dataIA['detections']);
-                    $rapportTextuel = "Alerte [CRITIQUE] : Infraction EPI ({$infractions}) détectée sur {$nomZone}.";
-                }
-
-                if (isset($dataIA['confidence'])) {
-                    $scoreConfiance = (float) $dataIA['confidence'];
-                }
-            }
+            [$imageAnnoteeUrl, $detailsJson, $rapportTexte] = $this->appellerGradio($imageBase64);
         } catch (\Exception $e) {
-            Log::error("Erreur de connexion à l'API Hugging Face : " . $e->getMessage());
+            Log::error('Erreur appel Gradio: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Le service de détection IA est indisponible.',
+            ], 502);
         }
 
-        // 3. Enregistrement de l'anomalie en BDD
-        $dataAnomalie = [
-            'type' => $typeAnomalie,
+        $estDanger = str_contains(mb_strtoupper($rapportTexte), 'DANGER');
+
+        if (!$estDanger) {
+            return response()->json([
+                'status' => 'ok',
+                'danger' => false,
+                'rapport' => $rapportTexte,
+                'detections' => $detailsJson,
+            ]);
+        }
+
+        $score = 0.5;
+        if (is_array($detailsJson)) {
+            foreach ($detailsJson as $item) {
+                if (isset($item['confiance']) && $item['confiance'] > $score) {
+                    $score = $item['confiance'];
+                }
+            }
+        }
+
+        $anomalie = Anomalie::create([
+            'type' => 'absence_epi',
             'criticite' => 'haute',
             'date_detection' => now(),
-            'zone' => $nomZone,
-            'score_confiance' => $scoreConfiance,
-            'statut' => 'nouvelle'
-        ];
+            'zone' => $zone,
+            'score_confiance' => round($score, 3),
+            'statut' => 'nouvelle',
+        ]);
 
-        if (Schema::hasColumn('anomalies', 'image_url')) {
-            $dataAnomalie['image_url'] = $imageAStocke;
-        }
-
-        $anomalie = Anomalie::create($dataAnomalie);
-
-        // 4. Enregistrement dans la table heatmaps
-        if (Schema::hasTable('heatmaps')) {
+        if ($imageAnnoteeUrl) {
             try {
-                $insertData = ['anomalie_id' => $anomalie->id];
-                
-                if (Schema::hasColumn('heatmaps', 'chemin')) {
-                    $insertData['chemin'] = $imageAStocke;
-                }
-                if (Schema::hasColumn('heatmaps', 'image_url')) {
-                    $insertData['image_url'] = $imageAStocke;
-                }
-                if (Schema::hasColumn('heatmaps', 'created_at')) {
-                    $insertData['created_at'] = now();
-                    $insertData['updated_at'] = now();
-                }
+                $imageContenu = Http::timeout(15)->get($imageAnnoteeUrl)->body();
+                $nomFichier = 'heatmaps/' . uniqid() . '.jpg';
+                Storage::disk('public')->put($nomFichier, $imageContenu);
 
-                DB::table('heatmaps')->insert($insertData);
+                Heatmap::create([
+                    'anomalie_id' => $anomalie->id,
+                    'image_url' => Storage::url($nomFichier),
+                ]);
             } catch (\Exception $e) {
-                // Évite d'interrompre si la table a des contraintes différentes
+                Log::warning('Impossible de récupérer l\'image annotée: ' . $e->getMessage());
             }
         }
 
+        RapportTextuel::create([
+            'anomalie_id' => $anomalie->id,
+            'contenu' => $rapportTexte,
+            'date_generation' => now(),
+        ]);
+
         return response()->json([
-            'status' => 'success',
-            'anomalie_detectee' => true,
-            'chemin_heatmap' => $imageAStocke,
-            'rapport_textuel' => $rapportTextuel,
-            'criticite' => 'HAUTE',
-            'anomalie' => $anomalie->load(['heatmap', 'rapportTextuel'])
-        ], 200);
+            'status' => 'ok',
+            'danger' => true,
+            'rapport' => $rapportTexte,
+            'detections' => $detailsJson,
+            'anomalie' => $anomalie->load(['heatmap', 'rapportTextuel']),
+        ], 201);
+    }
+
+    /**
+     * Effectue les 3 étapes d'appel à l'API Gradio et retourne [image_url, details_json, rapport_texte]
+     */
+    private function appellerGradio(string $imageBase64): array
+    {
+        $imageData = preg_replace('#^data:image/\w+;base64,#i', '', $imageBase64);
+        $binaire = base64_decode($imageData);
+
+        if ($binaire === false) {
+            throw new \Exception('Image base64 invalide');
+        }
+
+        // Étape 1 : upload de l'image
+        $uploadResponse = Http::timeout(30)
+            ->attach('files', $binaire, 'frame.jpg')
+            ->post("{$this->gradioBaseUrl}/gradio_api/upload");
+
+        if (!$uploadResponse->successful()) {
+            throw new \Exception('Échec upload Gradio: ' . $uploadResponse->body());
+        }
+
+        $cheminsUploades = $uploadResponse->json();
+        $cheminServeur = $cheminsUploades[0] ?? null;
+
+        if (!$cheminServeur) {
+            throw new \Exception('Aucun chemin retourné par l\'upload Gradio');
+        }
+
+        // Étape 2 : appel de la fonction /detect
+        $callResponse = Http::timeout(30)->post("{$this->gradioBaseUrl}/gradio_api/call/detect", [
+            'data' => [
+                [
+                    'path' => $cheminServeur,
+                    'meta' => ['_type' => 'gradio.FileData'],
+                ],
+            ],
+        ]);
+
+        $eventId = $callResponse->json('event_id');
+        if (!$eventId) {
+            throw new \Exception('Pas d\'event_id retourné par Gradio: ' . $callResponse->body());
+        }
+
+        // Étape 3 : récupération du résultat (flux SSE)
+        $ch = curl_init("{$this->gradioBaseUrl}/gradio_api/call/detect/{$eventId}");
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+        $brut = curl_exec($ch);
+        $erreurCurl = curl_error($ch);
+        curl_close($ch);
+
+        if ($brut === false) {
+            throw new \Exception('Erreur curl: ' . $erreurCurl);
+        }
+
+        if (!preg_match('/event:\s*complete\s*\ndata:\s*(\[.*\])/s', $brut, $matches)) {
+            throw new \Exception('Réponse Gradio non reconnue: ' . substr($brut, 0, 300));
+        }
+
+        $resultat = json_decode($matches[1], true);
+
+        if (!$resultat || count($resultat) < 3) {
+            throw new \Exception('Format de résultat Gradio inattendu');
+        }
+
+        $imageInfo = $resultat[0];
+        $imageUrl = null;
+        if (is_array($imageInfo) && isset($imageInfo['path'])) {
+            $imageUrl = "{$this->gradioBaseUrl}/gradio_api/file=" . $imageInfo['path'];
+        } elseif (is_array($imageInfo) && isset($imageInfo['url'])) {
+            $imageUrl = $imageInfo['url'];
+        }
+
+        return [$imageUrl, $resultat[1], $resultat[2]];
     }
 
     public function store(Request $request)
