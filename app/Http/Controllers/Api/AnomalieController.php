@@ -15,6 +15,10 @@ class AnomalieController extends Controller
 {
     private string $gradioBaseUrl = 'https://oumamach-ppe-detection-docker.hf.space';
 
+    // Durée (en secondes) pendant laquelle on ignore les nouvelles détections
+    // identiques pour éviter de spammer la base de données
+    private int $cooldownSecondes = 60;
+
     // GET /api/anomalies
     public function index(Request $request)
     {
@@ -58,7 +62,7 @@ class AnomalieController extends Controller
             ], 502);
         }
 
-        $estDanger = str_contains(mb_strtoupper($rapportTexte), 'DANGER');
+        $estDanger = str_contains($rapportTexte, '🚨') || str_contains(mb_strtolower($rapportTexte), 'absence');
 
         if (!$estDanger) {
             return response()->json([
@@ -66,6 +70,24 @@ class AnomalieController extends Controller
                 'danger' => false,
                 'rapport' => $rapportTexte,
                 'detections' => $detailsJson,
+            ]);
+        }
+
+        // Anti-doublon : si une anomalie identique existe déjà récemment pour cette zone, on ne recrée pas d'entrée
+        $anomalieRecente = Anomalie::where('zone', $zone)
+            ->where('type', 'absence_epi')
+            ->where('date_detection', '>=', now()->subSeconds($this->cooldownSecondes))
+            ->latest('date_detection')
+            ->first();
+
+        if ($anomalieRecente) {
+            return response()->json([
+                'status' => 'ok',
+                'danger' => true,
+                'rapport' => $rapportTexte,
+                'detections' => $detailsJson,
+                'anomalie' => $anomalieRecente->load(['heatmap', 'rapportTextuel']),
+                'doublon_ignore' => true,
             ]);
         }
 
@@ -118,7 +140,8 @@ class AnomalieController extends Controller
     }
 
     /**
-     * Effectue les 3 étapes d'appel à l'API Gradio et retourne [image_url, details_json, rapport_texte]
+     * Effectue les 2 étapes d'appel à l'API Gradio (/upload puis /api/predict)
+     * et retourne [image_url, details_json, rapport_texte]
      */
     private function appellerGradio(string $imageBase64): array
     {
@@ -132,7 +155,7 @@ class AnomalieController extends Controller
         // Étape 1 : upload de l'image
         $uploadResponse = Http::timeout(30)
             ->attach('files', $binaire, 'frame.jpg')
-            ->post("{$this->gradioBaseUrl}/gradio_api/upload");
+            ->post("{$this->gradioBaseUrl}/upload");
 
         if (!$uploadResponse->successful()) {
             throw new \Exception('Échec upload Gradio: ' . $uploadResponse->body());
@@ -145,50 +168,30 @@ class AnomalieController extends Controller
             throw new \Exception('Aucun chemin retourné par l\'upload Gradio');
         }
 
-        // Étape 2 : appel de la fonction /predict
-        $callResponse = Http::timeout(30)->post("{$this->gradioBaseUrl}/gradio_api/call/predict", [
-            'data' => [
-                [
-                    'path' => $cheminServeur,
-                    'meta' => ['_type' => 'gradio.FileData'],
+        // Étape 2 : appel synchrone de /api/predict
+        $predictResponse = Http::timeout(60)
+            ->withHeaders(['Content-Type' => 'application/json'])
+            ->post("{$this->gradioBaseUrl}/api/predict", [
+                'data' => [
+                    [
+                        'path' => $cheminServeur,
+                        'meta' => ['_type' => 'gradio.FileData'],
+                    ],
                 ],
-            ],
-        ]);
+            ]);
 
-        $eventId = $callResponse->json('event_id');
-        if (!$eventId) {
-            throw new \Exception('Pas d\'event_id retourné par Gradio: ' . $callResponse->body());
+        if (!$predictResponse->successful()) {
+            throw new \Exception('Échec appel predict: ' . $predictResponse->body());
         }
 
-        // Étape 3 : récupération du résultat (flux SSE)
-        $ch = curl_init("{$this->gradioBaseUrl}/gradio_api/call/predict/{$eventId}");
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-        $brut = curl_exec($ch);
-        $erreurCurl = curl_error($ch);
-        curl_close($ch);
-
-        if ($brut === false) {
-            throw new \Exception('Erreur curl: ' . $erreurCurl);
-        }
-
-        if (!preg_match('/event:\s*complete\s*\ndata:\s*(\[.*\])/s', $brut, $matches)) {
-            throw new \Exception('Réponse Gradio non reconnue: ' . substr($brut, 0, 300));
-        }
-
-        $resultat = json_decode($matches[1], true);
+        $resultat = $predictResponse->json('data');
 
         if (!$resultat || count($resultat) < 3) {
-            throw new \Exception('Format de résultat Gradio inattendu');
+            throw new \Exception('Format de résultat Gradio inattendu: ' . $predictResponse->body());
         }
 
         $imageInfo = $resultat[0];
-        $imageUrl = null;
-        if (is_array($imageInfo) && isset($imageInfo['path'])) {
-            $imageUrl = "{$this->gradioBaseUrl}/gradio_api/file=" . $imageInfo['path'];
-        } elseif (is_array($imageInfo) && isset($imageInfo['url'])) {
-            $imageUrl = $imageInfo['url'];
-        }
+        $imageUrl = is_array($imageInfo) ? ($imageInfo['url'] ?? null) : null;
 
         return [$imageUrl, $resultat[1], $resultat[2]];
     }

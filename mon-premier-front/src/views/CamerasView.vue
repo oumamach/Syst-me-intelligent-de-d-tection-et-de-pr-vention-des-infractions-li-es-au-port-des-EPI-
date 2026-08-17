@@ -32,7 +32,7 @@ async function demarrerWebcam() {
     })
 
     // Lancer la détection automatique toutes les 3 secondes
-    intervalDetection = setInterval(capturerEtDetecter, 3000)
+    intervalDetection = setInterval(capturerEtDetecter, 15000)
   } catch (e) {
     console.error("Impossible d'accéder à la webcam:", e)
   }
@@ -45,7 +45,6 @@ async function capturerEtDetecter() {
   const video = document.querySelector('video.camera-feed')
   if (!video || video.readyState !== 4) return
 
-  // 1. Dimensions optimisées
   const canvas = document.createElement('canvas')
   canvas.width = 640
   canvas.height = 360
@@ -53,27 +52,26 @@ async function capturerEtDetecter() {
   const ctx = canvas.getContext('2d')
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-  // 2. Compression JPEG à 50% de qualité
-  const imageBase64Legere = canvas.toDataURL('image/jpeg', 0.5)
+  const imageBase64Legere = canvas.toDataURL('image/jpeg', 0.85)
 
   analyseEnCours.value = true
   try {
-    const activeCamId = cameraZoomee.value ? cameraZoomee.value.id : (cameras.value[0]?.id || 1)
-    
-    // Envoi de la capture à Laravel
+    const activeCam = cameraZoomee.value || cameras.value[0]
+    const zone = activeCam?.zone || activeCam?.emplacement || activeCam?.nom || 'Camera_1'
+
     const response = await api.post('/detecter-anomalie', {
       image: imageBase64Legere,
-      camera_id: activeCamId
+      zone: zone,
     })
 
-    if (response.data) {
+    if (response.data?.danger) {
       resultatIa.value = {
-        rapport: response.data.rapport_textuel || response.data.description,
-        criticite: response.data.criticite || 'HAUTE'
+        rapport: response.data.rapport,
+        criticite: response.data.anomalie?.criticite?.toUpperCase() || 'HAUTE',
       }
     }
   } catch (e) {
-    console.error("Erreur de détection automatique:", e)
+    console.error('Erreur de détection automatique:', e)
   } finally {
     analyseEnCours.value = false
   }
