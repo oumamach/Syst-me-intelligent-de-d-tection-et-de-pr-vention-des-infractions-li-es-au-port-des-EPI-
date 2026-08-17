@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Storage;
 
 class AnomalieController extends Controller
 {
-    private string $gradioBaseUrl = 'https://ppe-detection-7bya.onrender.com';
+    private string $gradioBaseUrl = 'https://oumamach-ppe-detection-docker.hf.space';
 
     // GET /api/anomalies
     public function index(Request $request)
@@ -145,8 +145,8 @@ class AnomalieController extends Controller
             throw new \Exception('Aucun chemin retourné par l\'upload Gradio');
         }
 
-        // Étape 2 : appel de la fonction /detect
-        $callResponse = Http::timeout(30)->post("{$this->gradioBaseUrl}/gradio_api/call/detect", [
+        // Étape 2 : appel de la fonction /predict
+        $callResponse = Http::timeout(30)->post("{$this->gradioBaseUrl}/gradio_api/call/predict", [
             'data' => [
                 [
                     'path' => $cheminServeur,
@@ -161,7 +161,7 @@ class AnomalieController extends Controller
         }
 
         // Étape 3 : récupération du résultat (flux SSE)
-        $ch = curl_init("{$this->gradioBaseUrl}/gradio_api/call/detect/{$eventId}");
+        $ch = curl_init("{$this->gradioBaseUrl}/gradio_api/call/predict/{$eventId}");
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 60);
         $brut = curl_exec($ch);
