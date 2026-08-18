@@ -4,6 +4,7 @@ import api from '@/services/api'
 
 const anomalies = ref([])
 const derniere = ref(null)
+const selectionnee = ref(null) // anomalie cliquée manuellement dans "Alertes récentes"
 let interval = null
 
 const BACKEND_URL = 'http://127.0.0.1:8000'
@@ -12,41 +13,43 @@ async function chargerDonnees() {
   try {
     const response = await api.get('/anomalies')
     anomalies.value = response.data.slice(0, 6)
-    
+
     if (anomalies.value.length > 0) {
       derniere.value = anomalies.value[0]
-      console.log("🔍 Données reçues pour la dernière anomalie :", derniere.value)
     }
   } catch (e) {
     console.error("Erreur chargement anomalies:", e)
   }
 }
 
-// Fonction d'extraction d'image universelle (Objets, Tableaux, Champs multiples)
-// + préfixage automatique de l'URL backend pour les chemins relatifs (/storage/...)
+// L'anomalie affichée dans les panneaux du haut :
+// celle cliquée manuellement en priorité, sinon la plus récente automatiquement
+function anomalieAffichee() {
+  return selectionnee.value || derniere.value
+}
+
+function selectionnerAlerte(anomalie) {
+  selectionnee.value = anomalie
+}
+
+function urlComplete(chemin) {
+  if (!chemin) return null
+  return chemin.startsWith('http') ? chemin : `${BACKEND_URL}${chemin}`
+}
+
 function obtenirImage(anomalie) {
   if (!anomalie) return null
-
   let chemin = null
 
-  // 1. Si l'image est directement sur l'objet anomalie
   if (anomalie.image_url) {
     chemin = anomalie.image_url
-  }
-  // 2. Si heatmap est un tableau d'éléments (Relation HasMany)
-  else if (Array.isArray(anomalie.heatmap) && anomalie.heatmap.length > 0) {
+  } else if (Array.isArray(anomalie.heatmap) && anomalie.heatmap.length > 0) {
     chemin = anomalie.heatmap[0].chemin || anomalie.heatmap[0].image_url || null
-  }
-  // 3. Si heatmap est un objet individuel (Relation HasOne / BelongsTo)
-  else if (anomalie.heatmap && typeof anomalie.heatmap === 'object') {
+  } else if (anomalie.heatmap && typeof anomalie.heatmap === 'object') {
     chemin = anomalie.heatmap.chemin || anomalie.heatmap.image_url || null
   }
 
-  if (!chemin) return null
-
-  // Si c'est déjà une URL complète (http...), on ne touche à rien
-  // Sinon on préfixe avec l'adresse du backend Laravel
-  return chemin.startsWith('http') ? chemin : `${BACKEND_URL}${chemin}`
+  return urlComplete(chemin)
 }
 
 onMounted(() => {
@@ -62,34 +65,35 @@ onUnmounted(() => {
 <template>
   <div>
     <!-- Bandeau d'alerte supérieure -->
-    <div class="alert-banner" v-if="derniere">
-      <span class="badge">{{ (derniere.criticite || 'HAUTE').toUpperCase() }}</span>
+    <div class="alert-banner" v-if="anomalieAffichee()">
+      <span class="badge">{{ (anomalieAffichee().criticite || 'HAUTE').toUpperCase() }}</span>
       <span class="msg">
-        Anomalie détectée — <b>{{ derniere.zone }}</b> · {{ (derniere.type || '').replaceAll('_', ' ') }}
+        Anomalie détectée — <b>{{ anomalieAffichee().zone }}</b> · {{ (anomalieAffichee().type || '').replaceAll('_', ' ') }}
       </span>
-      <span class="time">{{ derniere.date_detection }}</span>
+      <span class="time">{{ anomalieAffichee().date_detection }}</span>
+      <button v-if="selectionnee" class="clear-btn" @click="selectionnee = null">✕ Voir le direct</button>
     </div>
 
     <div class="op-grid">
       <!-- Panel 1 : Capture de l'anomalie en direct -->
       <div class="panel">
         <div class="panel-head">
-          <span class="t">Flux vidéo — {{ derniere?.zone || 'Caméra principale' }}</span>
-          <span class="live-tag"><span class="pulse-dot"></span>CAPTURÉ</span>
+          <span class="t">Flux vidéo — {{ anomalieAffichee()?.zone || 'Caméra principale' }}</span>
+          <span class="live-tag"><span class="pulse-dot"></span>{{ selectionnee ? 'HISTORIQUE' : 'CAPTURÉ' }}</span>
         </div>
         <div class="video-feed">
-          <img 
-            v-if="obtenirImage(derniere)" 
-            :src="obtenirImage(derniere)" 
-            style="width:100%;height:100%;object-fit:cover" 
+          <img
+            v-if="obtenirImage(anomalieAffichee())"
+            :src="obtenirImage(anomalieAffichee())"
+            style="width:100%;height:100%;object-fit:cover"
             alt="Capture anomalie"
           />
           <div v-else class="empty-media">
-            <p>📷 Image en attente de capture pour {{ derniere?.zone || 'la caméra' }}</p>
+            <p>📷 Image en attente de capture pour {{ anomalieAffichee()?.zone || 'la caméra' }}</p>
           </div>
 
           <div class="scanline"></div>
-          <div class="cam-label"><span class="rec"></span>{{ derniere?.zone || 'CAM-01' }}</div>
+          <div class="cam-label"><span class="rec"></span>{{ anomalieAffichee()?.zone || 'CAM-01' }}</div>
         </div>
       </div>
 
@@ -100,20 +104,20 @@ onUnmounted(() => {
           <span class="live-tag" style="color:var(--cyan)">IA ACTIVE</span>
         </div>
         <div class="heatmap-wrap">
-          <img 
-            v-if="obtenirImage(derniere)" 
-            :src="obtenirImage(derniere)" 
-            style="width:100%;height:100%;object-fit:cover" 
+          <img
+            v-if="obtenirImage(anomalieAffichee())"
+            :src="obtenirImage(anomalieAffichee())"
+            style="width:100%;height:100%;object-fit:cover"
             alt="Heatmap IA"
           />
           <div v-else class="empty-media">
             <span>Aucune anomalie active</span>
           </div>
         </div>
-        <div class="vlm-box" v-if="derniere">
-          <div class="label">RAPPORT — {{ derniere.date_detection }}</div>
+        <div class="vlm-box" v-if="anomalieAffichee()">
+          <div class="label">RAPPORT — {{ anomalieAffichee().date_detection }}</div>
           <div class="text">
-            {{ derniere.rapport_textuel?.contenu || `Anomalie [${derniere.criticite}] détectée dans la zone ${derniere.zone}.` }}
+            {{ anomalieAffichee().rapport_textuel?.contenu || `Anomalie [${anomalieAffichee().criticite}] détectée dans la zone ${anomalieAffichee().zone}.` }}
           </div>
         </div>
       </div>
@@ -123,7 +127,13 @@ onUnmounted(() => {
     <div class="panel" style="margin-top:20px;">
       <div class="panel-head"><span class="t">Alertes récentes</span></div>
       <div class="recent-list">
-        <div class="recent-item" v-for="a in anomalies" :key="a.id">
+        <div
+          class="recent-item"
+          :class="{ selected: selectionnee?.id === a.id }"
+          v-for="a in anomalies"
+          :key="a.id"
+          @click="selectionnerAlerte(a)"
+        >
           <span class="sev" :class="a.criticite === 'haute' ? 'c' : a.criticite === 'moyenne' ? 'm' : 'l'"></span>
           <div class="content">
             <div class="zone">{{ a.zone }}</div>
@@ -151,8 +161,11 @@ onUnmounted(() => {
 .vlm-box{ margin:14px 16px 16px; padding:13px 14px; background:var(--panel-2); border:1px solid var(--border); border-left:3px solid var(--critical); border-radius:8px; }
 .vlm-box .label{ font-family:var(--font-mono); font-size:9.5px; color:var(--critical); letter-spacing:.08em; margin-bottom:6px; font-weight:700; }
 .vlm-box .text{ font-size:12.5px; line-height:1.6; font-style:italic; }
-.recent-item{ display:flex; align-items:center; gap:12px; padding:11px 16px; border-bottom:1px solid var(--border); }
+
+.recent-item{ display:flex; align-items:center; gap:12px; padding:11px 16px; border-bottom:1px solid var(--border); cursor:pointer; transition: background 0.15s; }
 .recent-item:last-child{ border-bottom:none; }
+.recent-item:hover{ background: var(--panel-2); }
+.recent-item.selected{ background: var(--panel-2); border-left: 3px solid var(--cyan); }
 .recent-item .sev{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 .recent-item .sev.c{ background:var(--critical); }
 .recent-item .sev.m{ background:var(--medium); }
@@ -161,4 +174,16 @@ onUnmounted(() => {
 .recent-item .zone{ font-size:12px; font-weight:500; }
 .recent-item .desc{ font-size:11px; color:var(--text-dim); }
 .recent-item .t{ font-family:var(--font-mono); font-size:10px; color:var(--text-dim); }
+
+.clear-btn{
+  margin-left: 12px;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.2);
+  color: var(--text-muted);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.clear-btn:hover{ background: rgba(255,255,255,0.08); }
 </style>
