@@ -6,6 +6,19 @@ import api from '@/services/api'
 const route = useRoute()
 const anomalie = ref(null)
 
+const BACKEND_URL = 'http://127.0.0.1:8000'
+
+function urlComplete(chemin) {
+  if (!chemin) return null
+  return chemin.startsWith('http') ? chemin : `${BACKEND_URL}${chemin}`
+}
+
+function obtenirImage(anomalie) {
+  if (!anomalie) return null
+  const chemin = anomalie.heatmap?.image_url || anomalie.heatmap?.chemin || anomalie.image_url
+  return urlComplete(chemin)
+}
+
 onMounted(async () => {
   try {
     const response = await api.get(`/anomalies/${route.params.id}`)
@@ -75,9 +88,9 @@ onMounted(async () => {
         
         <div class="media-body">
           <!-- Image Heatmap / Capture -->
-          <div v-if="anomalie.heatmap || anomalie.image_url" class="image-wrapper">
+          <div v-if="obtenirImage(anomalie)" class="image-wrapper">
             <img 
-              :src="anomalie.heatmap?.image_url || anomalie.heatmap?.chemin || anomalie.image_url" 
+              :src="obtenirImage(anomalie)" 
               alt="Analyse IA" 
               class="heatmap-img"
             />

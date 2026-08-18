@@ -5,7 +5,6 @@ import api from '@/services/api'
 const cameras = ref([])
 const cameraZoomee = ref(null)
 let mediaStream = null
-let intervalDetection = null
 
 // Résultats reçus de l'IA Hugging Face via Laravel
 const resultatIa = ref({
@@ -13,6 +12,8 @@ const resultatIa = ref({
   criticite: ''
 })
 const analyseEnCours = ref(false)
+const detections = ref([])
+const enBoucle = ref(false)
 
 async function chargerCameras() {
   try {
@@ -30,28 +31,34 @@ async function demarrerWebcam() {
     document.querySelectorAll('video.camera-feed').forEach((v) => {
       v.srcObject = mediaStream
     })
-
-    // Lancer la détection automatique toutes les 3 secondes
-    intervalDetection = setInterval(capturerEtDetecter, 15000)
+    bouclerDetection()
   } catch (e) {
     console.error("Impossible d'accéder à la webcam:", e)
   }
 }
 
-// Extraction automatique d'une frame compressée et envoi au Dashboard
-async function capturerEtDetecter() {
-  if (!mediaStream || analyseEnCours.value) return
+async function bouclerDetection() {
+  enBoucle.value = true
+  while (enBoucle.value) {
+    await capturerEtDetecter()
+  }
+}
 
-  const video = document.querySelector('video.camera-feed')
-  if (!video || video.readyState !== 4) return
+// Extraction automatique d'une frame et envoi à Laravel, en boucle continue
+async function capturerEtDetecter() {
+  if (!mediaStream) return
+
+  const enZoom = !!cameraZoomee.value
+  const video = document.querySelector(enZoom ? 'video.camera-feed-zoom' : 'video.camera-feed')
+  if (!video || video.readyState !== 4) {
+    await new Promise((r) => setTimeout(r, 500))
+    return
+  }
 
   const canvas = document.createElement('canvas')
   canvas.width = 640
   canvas.height = 360
-
-  const ctx = canvas.getContext('2d')
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
   const imageBase64Legere = canvas.toDataURL('image/jpeg', 0.85)
 
   analyseEnCours.value = true
@@ -64,17 +71,59 @@ async function capturerEtDetecter() {
       zone: zone,
     })
 
+    detections.value = response.data?.detections || []
+    dessinerBoites()
+
     if (response.data?.danger) {
       resultatIa.value = {
         rapport: response.data.rapport,
         criticite: response.data.anomalie?.criticite?.toUpperCase() || 'HAUTE',
       }
+    } else {
+      resultatIa.value = { rapport: response.data?.rapport || '', criticite: 'BASSE' }
     }
   } catch (e) {
     console.error('Erreur de détection automatique:', e)
+    await new Promise((r) => setTimeout(r, 3000))
   } finally {
     analyseEnCours.value = false
   }
+}
+
+function dessinerBoites() {
+  const enZoom = !!cameraZoomee.value
+  const selecteurVideo = enZoom ? 'video.camera-feed-zoom' : 'video.camera-feed'
+  const selecteurCanvas = enZoom ? 'canvas.overlay-boites-zoom' : 'canvas.overlay-boites'
+
+  const video = document.querySelector(selecteurVideo)
+  const overlay = document.querySelector(selecteurCanvas)
+  if (!overlay || !video) return
+
+  overlay.width = video.clientWidth
+  overlay.height = video.clientHeight
+  const ctx = overlay.getContext('2d')
+  ctx.clearRect(0, 0, overlay.width, overlay.height)
+
+  const scaleX = overlay.width / 640
+  const scaleY = overlay.height / 360
+
+  detections.value.forEach((det) => {
+    const [x1, y1, x2, y2] = det.boite
+    const estDanger = det.classe.startsWith('no-')
+    const couleur = estDanger ? '#E07A5F' : '#81B29A'
+
+    ctx.strokeStyle = couleur
+    ctx.lineWidth = 2
+    ctx.strokeRect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY)
+
+    const label = `${det.classe} ${Math.round(det.confiance * 100)}%`
+    ctx.font = '12px monospace'
+    const largeurTexte = ctx.measureText(label).width + 8
+    ctx.fillStyle = couleur
+    ctx.fillRect(x1 * scaleX, y1 * scaleY - 16, largeurTexte, 16)
+    ctx.fillStyle = '#fff'
+    ctx.fillText(label, x1 * scaleX + 4, y1 * scaleY - 4)
+  })
 }
 
 function ouvrirZoom(camera) {
@@ -95,7 +144,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (intervalDetection) clearInterval(intervalDetection)
+  enBoucle.value = false
   if (mediaStream) {
     mediaStream.getTracks().forEach((track) => track.stop())
   }
@@ -137,6 +186,7 @@ onUnmounted(() => {
       >
         <!-- Flux vidéo en direct -->
         <video class="camera-feed" autoplay muted playsinline></video>
+        <canvas class="overlay-boites"></canvas>
 
         <div class="overlay-info">
           <span class="nom">{{ camera.nom }}</span>
@@ -157,8 +207,9 @@ onUnmounted(() => {
         
         <div class="modal-body">
           <div class="zoom-video-container">
-            <video class="camera-feed-zoom" autoplay muted playsinline></video>
-          </div>
+  <video class="camera-feed-zoom" autoplay muted playsinline></video>
+  <canvas class="overlay-boites-zoom"></canvas>
+</div>
 
           <div v-if="resultatIa.rapport" class="vlm-box-modal">
             <strong>Résultat IA Hugging Face :</strong> {{ resultatIa.rapport }}
@@ -299,6 +350,15 @@ onUnmounted(() => {
   object-fit: cover;
 }
 
+.overlay-boites {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
 .overlay-info {
   position: absolute;
   bottom: 0;
@@ -329,6 +389,7 @@ onUnmounted(() => {
   height: 9px;
   border-radius: 50%;
   box-shadow: 0 0 6px rgba(0,0,0,0.5);
+  z-index: 2;
 }
 
 .statut-dot.actif { background: var(--low, #81B29A); }
@@ -383,10 +444,19 @@ onUnmounted(() => {
 }
 
 .zoom-video-container {
+  position: relative;
   background: #000;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--border, #4A3E38);
+}
+.overlay-boites-zoom {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 .camera-feed-zoom {

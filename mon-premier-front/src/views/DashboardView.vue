@@ -5,6 +5,9 @@ import api from '@/services/api'
 const anomalies = ref([])
 const derniere = ref(null)
 let interval = null
+
+const BACKEND_URL = 'http://127.0.0.1:8000'
+
 async function chargerDonnees() {
   try {
     const response = await api.get('/anomalies')
@@ -12,7 +15,6 @@ async function chargerDonnees() {
     
     if (anomalies.value.length > 0) {
       derniere.value = anomalies.value[0]
-      // LIGNE DE DÉBOGAGE À AJOUTER :
       console.log("🔍 Données reçues pour la dernière anomalie :", derniere.value)
     }
   } catch (e) {
@@ -21,23 +23,30 @@ async function chargerDonnees() {
 }
 
 // Fonction d'extraction d'image universelle (Objets, Tableaux, Champs multiples)
+// + préfixage automatique de l'URL backend pour les chemins relatifs (/storage/...)
 function obtenirImage(anomalie) {
   if (!anomalie) return null
 
+  let chemin = null
+
   // 1. Si l'image est directement sur l'objet anomalie
-  if (anomalie.image_url) return anomalie.image_url
-
+  if (anomalie.image_url) {
+    chemin = anomalie.image_url
+  }
   // 2. Si heatmap est un tableau d'éléments (Relation HasMany)
-  if (Array.isArray(anomalie.heatmap) && anomalie.heatmap.length > 0) {
-    return anomalie.heatmap[0].chemin || anomalie.heatmap[0].image_url || null
+  else if (Array.isArray(anomalie.heatmap) && anomalie.heatmap.length > 0) {
+    chemin = anomalie.heatmap[0].chemin || anomalie.heatmap[0].image_url || null
   }
-
   // 3. Si heatmap est un objet individuel (Relation HasOne / BelongsTo)
-  if (anomalie.heatmap && typeof anomalie.heatmap === 'object') {
-    return anomalie.heatmap.chemin || anomalie.heatmap.image_url || null
+  else if (anomalie.heatmap && typeof anomalie.heatmap === 'object') {
+    chemin = anomalie.heatmap.chemin || anomalie.heatmap.image_url || null
   }
 
-  return null
+  if (!chemin) return null
+
+  // Si c'est déjà une URL complète (http...), on ne touche à rien
+  // Sinon on préfixe avec l'adresse du backend Laravel
+  return chemin.startsWith('http') ? chemin : `${BACKEND_URL}${chemin}`
 }
 
 onMounted(() => {
