@@ -1,33 +1,19 @@
-:root {
-  /* Palette Pastel Chaleureuse : Marron Moka & Beige Poudré */
-  --bg: #1F1917;                  /* Fond marron chocolat/moka très sombre et mat (pas d'agression visuelle) */
-  --panel: #2C2421;               /* Cartes marron chaud poudré */
-  --panel-2: #382E2A;             /* Fond secondaire marron/terracotta très doux */
-  --border: #4A3E38;              /* Bordures marron/beige poudré */
-
-  --text: #F3EBE6;                /* Texte beige poudré ultra lisible */
-  --text-muted: #C4B5AC;          /* Texte marron glacé poudré */
-  --text-dim: #8F7E75;            /* Texte secondaire estompé */
-
-  /* Accents Pastel */
-  --cyan: #8FB9B3;                /* Vert d'eau / Océan pastel */
-  --rose-accent: #D4A373;         /* Beige / Marron cuivré pastel poudré */
-  --rose-hover: #C59262;          
-  --rose-light: #3D312B;          
-
-  /* Statuts et Alertes Pastel */
-  --critical: #E07A5F;            /* Terracotta pastel poudré pour les alertes */
-  --medium: #F2CC8F;              /* Jaune sable pastel */
-  --low: #81B29A;                 /* Vert sauge pastel */
-  --hazard: #F2CC8F;              
-
-  /* Typographie */
-  --font-ui: 'Plus Jakarta Sans', 'IBM Plex Sans', -apple-system, sans-serif;
+:root{
+  --bg:#0A1F35;
+  --panel:#0F2A47;
+  --panel-2:#153a5e;
+  --border:#1F4568;
+  --text:#EAF2FB;
+  --text-muted:#9FB8D1;
+  --text-dim:#6D89A8;
+  --cyan:#29ABE2;
+  --critical:#E8483C;
+  --medium:#F0A23D;
+  --low:#3DBA7D;
+  --hazard:#F0C93D;
+  --font-ui: 'IBM Plex Sans', -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
-
-  /* Ombres douces et chaleureuses */
-  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+ --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 * { 

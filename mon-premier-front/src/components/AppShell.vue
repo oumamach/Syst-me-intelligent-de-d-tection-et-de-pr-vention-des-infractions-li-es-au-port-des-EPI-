@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import portBg from '@/assets/port-bg.jpg'
 
 const route = useRoute()
 const router = useRouter()
@@ -52,9 +53,11 @@ const initiales = () => {
     </div>
 
     <div class="main">
-      <div class="topbar">
+      <div class="topbar"
+        :style="{backgroundImage: 'url(' + portBg + ')'}" 
+      >
         <div class="brand">
-          <div class="name">TERMINAL ALLIANCE — SURVEILLANCE IA</div>
+          <div class="name">TANGER ALLIANCE — SURVEILLANCE IA</div>
           <div class="sub">
             {{ route.path==='/manager' ? 'MODULE MANAGER · BUSINESS INTELLIGENCE' : 'MODULE OPÉRATEUR · SURVEILLANCE TEMPS RÉEL' }}
           </div>
@@ -76,6 +79,7 @@ const initiales = () => {
       </div>
     </div>
   </div>
+  
 </template>
 
 <style scoped>
@@ -86,10 +90,12 @@ const initiales = () => {
   display:flex; flex-direction:column; align-items:center; padding:20px 0; gap:8px; flex-shrink:0;
 }
 .mark{
-  width:36px; height:36px; border-radius:8px;
-  background:linear-gradient(135deg, var(--cyan), #1a7a91);
+  width:38px; height:38px; border-radius:8px;
+  background:linear-gradient(135deg, var(--cyan), #0d5a8a);
   display:flex; align-items:center; justify-content:center;
-  font-family:var(--font-mono); font-weight:700; font-size:13px; color:#08131a; margin-bottom:28px;
+  font-family:var(--font-ui); font-weight:800; font-size:14px; color:#fff; margin-bottom:28px;
+  letter-spacing:-0.02em;
+  box-shadow: 0 2px 8px rgba(41,171,226,0.3);
 }
 .nav-item{
   width:46px; height:46px; border-radius:10px; display:flex; align-items:center; justify-content:center;
@@ -107,7 +113,9 @@ const initiales = () => {
 .main{ flex:1; display:flex; flex-direction:column; min-width:0; }
 .topbar{
   height:64px; border-bottom:1px solid var(--border); display:flex; align-items:center;
-  justify-content:space-between; padding:0 28px; flex-shrink:0; background:var(--bg);
+  justify-content:space-between; padding:0 28px; flex-shrink:0;
+  background-size: cover;
+  background-position: center;
 }
 .brand .name{ font-weight:600; font-size:14px; letter-spacing:.04em; }
 .brand .sub{ font-family:var(--font-mono); font-size:10.5px; color:var(--text-dim); letter-spacing:.08em; }
